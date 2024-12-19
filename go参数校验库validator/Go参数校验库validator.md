@@ -205,95 +205,28 @@ func main() {
 
 ### 目前代码
 
-- 部分直接使用 `httputil.ParseRequestToJson()` 读取 HTTP 请求的 body，将其解析为 JSON 并存储到指定的结构体中，未进行参数验证
-- 还有部分使用了 `urlparam.Unmarshal()` ，通过 `req` 标签对参数进行简单的验证，然后将请求内容解析
+- 请求体（JSON格式）使用 `httputil.ParseRequestToJson()` 读取 HTTP 请求的 body，将其解析为 JSON 并存储到指定的结构体中，未进行参数验证
+- URL参数使用了 `urlparam.Unmarshal()` ，通过 `req` 标签对参数进行简单的验证，然后将请求内容解析
   - `req` 标签支持功能：
     - 字段名称映射：`Field1 string req:"field1"`
     - 忽略字段：`Field2 string req:"-"`
-    - 可选字段：`Field3 string req:"field3,omitempty`
+    - 可选字段：`Field3 string req:"field3,omitempty"`
   - 问题：
-    - 支持解析的数据类型有缺（无法处理数组、切片、布尔值）
-    - 每次调用 `FormValue` 都会遍历整个请求的表单数据，可能会导致性能问题
+    - 支持反序列化的种类有缺失，不支持例如浮点数、布尔值、嵌套结构体等。
 
 ### 改进
 
-在公司项目中，我们可以将 validator 应用于需要参数校验的模块，特别是在处理用户输入的 API 层。例如：
+引入validator库用于处理web端发送的请求中的参数校验。
 
 1. 定义结构体校验规则：在项目中的请求参数结构体上添加校验标签。
 
 2. 解析请求体：将请求的数据解析到结构体中。
+   - 请求体仍可采用原方法
+   - URL参数可以考虑引入 `schema` 库 (github.com/gorilla/schema) 用于参数的反序列化
 
 3. 执行校验并返回错误信息：校验不通过时，返回详细的错误信息，便于用户或开发人员快速定位问题。
 
 4. 错误处理：在实际业务逻辑中调用校验函数，错误时返回统一格式的响应。
-
-```go
-package main
-
-import (
-    "encoding/json"
-    "fmt"
-    "net/http"
-
-    "github.com/go-playground/validator/v10"
-    "github.com/gorilla/mux"
-)
-
-// 定义请求结构体
-type CreateUserRequest struct {
-    Name  string `json:"name" validate:"required"`
-    Email string `json:"email" validate:"required,email"`
-    Age   int    `json:"age" validate:"gte=0,lte=130"`
-}
-
-// 定义响应结构体
-type ErrorResponse struct {
-    Field   string `json:"field"`
-    Message string `json:"message"`
-}
-
-// 初始化验证器
-var validate = validator.New()
-
-// 处理创建用户请求的处理器
-func CreateUserHandler(w http.ResponseWriter, r *http.Request) {
-    var req CreateUserRequest
-
-    // 解析请求体
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        http.Error(w, "Invalid request body", http.StatusBadRequest)
-        return
-    }
-
-    // 验证请求参数
-    if err := validate.Struct(req); err != nil {
-        var errors []ErrorResponse
-        for _, err := range err.(validator.ValidationErrors) {
-            errors = append(errors, ErrorResponse{
-                Field:   err.Field(),
-                Message: fmt.Sprintf("Validation failed on '%s' tag", err.Tag()),
-            })
-        }
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(http.StatusBadRequest)
-        json.NewEncoder(w).Encode(errors)
-        return
-    }
-
-    // 处理业务逻辑
-    // ...
-
-    w.WriteHeader(http.StatusCreated)
-    w.Write([]byte("User created successfully"))
-}
-
-func main() {
-    r := mux.NewRouter()
-    r.HandleFunc("/users", CreateUserHandler).Methods("POST")
-
-    http.ListenAndServe(":8080", r)
-}
-```
 
 ## 参考资源
 
